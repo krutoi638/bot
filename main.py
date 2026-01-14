@@ -8,7 +8,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 
 TOKEN = "8195530369:AAF6icdaf76w38rRUfuetDRNYDzuqPYB_QI"
-ADMIN_IDS = [969783208]
+ADMIN_IDS = [969783208, 7213947960]
 
 WELCOME_TEXT = "<b>🕊 Здравствуйте, {name}!</b>\n\n🌊 Я бот флуда 'Первозданное море'"
 RULES_TEXT = "📜 Ознакомьтесь с правилами:\nt.me/pristine_sea_Flood"
@@ -391,3 +391,4 @@ async def send_complaint(message: types.Message, state: FSMContext):
 
 if __name__ == "__main__":
     asyncio.run(main())
+
