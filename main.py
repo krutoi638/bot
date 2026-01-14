@@ -74,6 +74,9 @@ class ComplaintFSM(StatesGroup):
     waiting_target = State()
     waiting_text = State()
 
+class AdminAnswerFSM(StatesGroup):
+    waiting_answer = State()
+
 # -------------------- Инициализация --------------------
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
@@ -144,6 +147,12 @@ def start_kb():
         [InlineKeyboardButton(text="⚠ Жалоба на участника/админа", callback_data="start_complaint")]
     ])
 
+def answer_kb(user_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏ Ответить", callback_data=f"ans_{user_id}")]
+    ])
+
+
 # -------------------- Хелперы --------------------
 async def check_ban(user_id: int, message: types.Message = None):
     if user_id in BANNED:
@@ -189,8 +198,14 @@ async def get_question(message: types.Message, state:FSMContext):
     if await check_ban(message.from_user.id, message):
         return
     for admin in ADMIN_IDS:
-        await bot.send_message(admin,
-            f"❓ Вопрос от @{message.from_user.username or 'нет'}\nID: {message.from_user.id}\n\n{message.text}")
+        await bot.send_message(
+            admin,
+            f"❓ Вопрос от @{message.from_user.username or 'нет'}\n"
+            f"ID: {message.from_user.id}\n\n"
+            f"{message.text}",
+            reply_markup=answer_kb(message.from_user.id)
+        )
+
     await message.answer("✅ Вопрос отправлен!")
     await state.clear()
 
@@ -389,6 +404,37 @@ async def send_complaint(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+# -------------- ответы админов ---------------------
+@dp.callback_query(F.data.startswith("ans_"))
+async def admin_start_answer(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("❌ Только админы", show_alert=True)
+        return
+
+    user_id = int(call.data.replace("ans_",""))
+    await state.update_data(answer_target=user_id)
+    await call.message.answer("✏ Введите текст ответа пользователю:")
+    await state.set_state(AdminAnswerFSM.waiting_answer)
+
+@dp.message(AdminAnswerFSM.waiting_answer)
+async def admin_send_answer(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    data = await state.get_data()
+    target_id = data["answer_target"]
+
+    try:
+        await bot.send_message(
+            target_id,
+            f"💬 Ответ администрации:\n\n{message.text}"
+        )
+        await message.answer("✅ Ответ отправлен пользователю.")
+    except:
+        await message.answer("❌ Не удалось отправить ответ.")
+
+    await state.clear()
+
+
 if __name__ == "__main__":
     asyncio.run(main())
-
