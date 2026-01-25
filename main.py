@@ -715,11 +715,6 @@ async def random_global(call: types.CallbackQuery, state: FSMContext):
     )
     await state.set_state(RegisterFSM.confirm)
 
-# --------- чат айди ---------
-
-@dp.message(Command("chatid"))
-async def chatid(message: types.Message):
-    await message.answer(f"ID этого чата: {message.chat.id}")
 
 # ----------- калл ---------------
 
@@ -813,5 +808,6 @@ async def track_members(message: types.Message):
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
