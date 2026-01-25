@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 TOKEN = "8195530369:AAF6icdaf76w38rRUfuetDRNYDzuqPYB_QI"
 ADMIN_IDS = [969783208, 7213947960]
 ADMIN_IDS_CALL = [969783208, 7213947960]
-FLOOD_CHAT_ID = -1003874212149
+FLOOD_CHAT_ID = -1002809884543
 
 ACTIVE_MEMBERS = {}
 WELCOME_TEXT = "<b>🕊 Здравствуйте, {name}!</b>\n\n🌊 Я бот флуда 'Первозданное море'"
@@ -813,4 +813,5 @@ async def track_members(message: types.Message):
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
