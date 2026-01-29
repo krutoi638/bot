@@ -1,18 +1,27 @@
-import asyncio, json, os, random, datetime
+import asyncio, json, os, random, datetime, re
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
+
 
 TOKEN = "8195530369:AAF6icdaf76w38rRUfuetDRNYDzuqPYB_QI"
 ADMIN_IDS = [969783208, 7213947960]
 ADMIN_IDS_CALL = [969783208, 7213947960]
 FLOOD_CHAT_ID = -1002809884543
 
-ACTIVE_MEMBERS = {}
+ANSWER_TIME = 300
+CALL_TIMERS = {}
 WELCOME_TEXT = "<b>🕊 Здравствуйте, {name}!</b>\n\n🌊 Я бот флуда 'Первозданное море'"
 RULES_TEXT = "📜 Ознакомьтесь с правилами:\nt.me/pristine_sea_Flood"
 SUCCESS_TEXT = "✅ Регистрация завершена!\nВот ссылка на флуд:\nhttps://t.me/+bjlQJT5cBk02ZjAy"
@@ -20,6 +29,8 @@ WRONG_CODE_TEXT = "❌ Кодовое слово неверное. Попроб�
 CODEWORD = "гринфлейм"
 OCCUPIED_FILE = "occupied.json"
 BANNED_FILE = "banned.json"
+ACTIVE_MEMBERS_FILE = "active_members.json"
+APPLICATIONS_FILE = "applications.json"
 ROLES = {
     "МОНДШТАДТ": ["Альбедо","Барбара","Беннет","Венти","Далия","Дилюк","Диона","Джинн","Кэйа","Кли","Лиза","Мона","Мика","Рэйзор","Розария","Сахароза","Фишль","Эмбер","Эола","Ноэлль","Дурин","Варка","Алиса","Николь"],
     "ЛИ ЮЭ": ["Бай Чжу","Бэй Доу","Гань Юй","Е Лань","Ка Мин","Кэ Цин","Нин Гуан","Син Цу","Сяо","Сян Лин","Синь Янь","Лань Янь","Ху Тао","Чун Юнь","Чжун Ли","Шэнь Хэ","Юнь Цзинь","Ци Ци","Янь Фей","Яо Яо","Сянь Юнь","Цзы Бай"],
@@ -45,7 +56,21 @@ MONTHS = {
     "11": "ноября",
     "12": "декабря"
 }
+GAME = {
+    "active": False,
+    "phase": "IDLE",
+    "chat_id": None,
 
+    "players": {},       # user_id: name
+    "princess": None,
+
+    "question": None,
+    "answers": {},
+    "answer_order": [],
+
+    "answers_closed": False,
+    "timer_task": None
+}
 
 # -------------------- Работа с файлами --------------------
 def load_json(path, default):
@@ -61,14 +86,35 @@ def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+
 OCCUPIED = load_json(OCCUPIED_FILE, {})
 BANNED = set(load_json(BANNED_FILE, []))
+APPLICATIONS = load_json(APPLICATIONS_FILE, {})
 
 def save_occupied():
     save_json(OCCUPIED_FILE, OCCUPIED)
 
 def save_banned():
     save_json(BANNED_FILE, list(BANNED))
+    
+def load_active_members():
+    if not os.path.exists(ACTIVE_MEMBERS_FILE):
+        return {}
+    with open(ACTIVE_MEMBERS_FILE, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except:
+            return {}
+
+def save_active_members(data):
+    with open(ACTIVE_MEMBERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def save_applications():
+    save_json(APPLICATIONS_FILE, APPLICATIONS)
+
+# загружаем участников при старте
+ACTIVE_MEMBERS = load_active_members()
 
 
 
@@ -95,8 +141,9 @@ class ComplaintFSM(StatesGroup):
 class AdminAnswerFSM(StatesGroup):
     waiting_answer = State()
 
+
 # -------------------- Инициализация --------------------
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 async def set_bot_commands():
     commands = [
@@ -152,12 +199,6 @@ async def clear_already_sent(already_sent):
 
 
 # -------------------- Клавиатуры --------------------
-def start_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📝 Я хочу вступить", callback_data="start_register")],
-        [InlineKeyboardButton(text="❓ Я хочу задать вопрос", callback_data="start_question")]
-    ])
-
 def rules_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Я прочитал, далее", callback_data="rules_ok")]
@@ -290,7 +331,20 @@ def regions_kb(free=False):
 
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
+def register_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💖 Участвовать", callback_data="join_game")]
+        ]
+    )
 
+def choice_kb(count: int):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"❌ {i}", callback_data=f"kick_{i}")]
+            for i in range(1, count + 1)
+        ]
+    )
 
 
 
@@ -441,6 +495,12 @@ async def check_code(message: types.Message, state: FSMContext):
     # Сохраняем занятую роль
     OCCUPIED[char] = {"id": message.from_user.id, "birthday": birthday_admin}
     save_occupied()
+    APPLICATIONS[str(message.from_user.id)] = {
+        "status": "pending",
+        "handled_by": None
+    }
+    save_applications()
+
 
 
     # Сообщение пользователю о завершении регистрации
@@ -458,6 +518,12 @@ async def check_code(message: types.Message, state: FSMContext):
         f"Персонаж: {char}\n"
         f"Дата рождения: {birthday}"
     )
+    app = APPLICATIONS.get(str(message.from_user.id))
+    handled_by = app["handled_by"] if app else None
+
+    if handled_by:
+        text += f"\n\n⚠ Обработано админом ID: {handled_by}"
+        
     for admin in ADMIN_IDS:
         await bot.send_message(
             admin,
@@ -606,10 +672,17 @@ async def admin_start_answer(call: types.CallbackQuery, state: FSMContext):
         await call.answer("❌ Только админы", show_alert=True)
         return
 
-    user_id = int(call.data.replace("ans_",""))
-    await state.update_data(answer_target=user_id)
+    user_id = call.data.replace("ans_", "")
+    app = APPLICATIONS.get(user_id)
+
+    if not app or app["status"] != "pending":
+        await call.answer("⚠ Анкета уже обработана другим админом", show_alert=True)
+        return
+
+    await state.update_data(answer_target=int(user_id))
     await call.message.answer("✏ Введите текст ответа пользователю:")
     await state.set_state(AdminAnswerFSM.waiting_answer)
+
 
 @dp.message(AdminAnswerFSM.waiting_answer)
 async def admin_send_answer(message: types.Message, state: FSMContext):
@@ -633,23 +706,25 @@ async def admin_send_answer(message: types.Message, state: FSMContext):
 # ----------- кнопки принять отклонить ----------------------
 @dp.callback_query(F.data.startswith("approve_"))
 async def approve_user(call: types.CallbackQuery):
-    if call.from_user.id not in ADMIN_IDS:
-        await call.answer("❌ Только админы", show_alert=True)
+    _, user_id, char = call.data.split("_")
+    user_id = str(user_id)
+
+    app = APPLICATIONS.get(user_id)
+
+    # ⛔ если анкета уже обработана
+    if not app or app["status"] != "pending":
+        await call.answer("⚠ Анкета уже обработана другим админом", show_alert=True)
         return
 
-    _, user_id, char = call.data.split("_")
-    user_id = int(user_id)
+    # ✅ фиксируем решение
+    app["status"] = "approved"
+    app["handled_by"] = call.from_user.id
+    save_applications()
 
-    await bot.send_message(
-        user_id,
-        "✅ Ваша анкета одобрена!\n\n"
-        "Добро пожаловать 🌊\n"
-        "Вот ссылка на флуд:\n"
-        "https://t.me/+bjlQJT5cBk02ZjAy"
-    )
-
+    await bot.send_message(int(user_id), "✅ Ваша анкета принята!")
     await call.message.edit_reply_markup()
-    await call.answer("Анкета принята ✅")
+    await call.answer("Принято ✅")
+
 
 @dp.callback_query(F.data.startswith("reject_"))
 async def reject_user(call: types.CallbackQuery):
@@ -658,21 +733,25 @@ async def reject_user(call: types.CallbackQuery):
         return
 
     _, user_id, char = call.data.split("_")
-    user_id = int(user_id)
+    user_id = str(user_id)
 
-    # освобождаем роль
+    app = APPLICATIONS.get(user_id)
+    if not app or app["status"] != "pending":
+        await call.answer("⚠ Анкета уже обработана другим админом", show_alert=True)
+        return
+
+    app["status"] = "rejected"
+    app["handled_by"] = call.from_user.id
+    save_applications()
+
     if char in OCCUPIED:
         OCCUPIED.pop(char)
         save_occupied()
 
-    try:
-        await bot.send_message(
-            user_id,
-            "❌ Ваша анкета отклонена.\n"
-            "Вы можете подать её повторно или выбрать другого персонажа."
-        )
-    except:
-        pass
+    await bot.send_message(
+        int(user_id),
+        "❌ Ваша анкета отклонена."
+    )
 
     await call.message.edit_reply_markup()
     await call.answer("Анкета отклонена ❌")
@@ -716,98 +795,353 @@ async def random_global(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(RegisterFSM.confirm)
 
 
+@dp.message(Command("princess"))
+async def princess_register(message: Message):
+    GAME.update({
+        "active": True,
+        "phase": "REGISTRATION",
+        "chat_id": message.chat.id,
+        "players": {},
+        "princess": None,
+        "question": None,
+        "answers": {},
+        "answer_order": [],
+        "answers_closed": False
+    })
+
+    if GAME["timer_task"]:
+        GAME["timer_task"].cancel()
+        GAME["timer_task"] = None
+
+    await message.answer(
+        "👑 <b>Открыта регистрация в игру «Принцесса»</b>\n\n"
+        "Нажмите кнопку ниже 👇",
+        reply_markup=register_kb()
+    )
+
+@dp.callback_query(F.data == "join_game")
+async def join_game(call: CallbackQuery):
+    if GAME["phase"] != "REGISTRATION":
+        await call.answer("Регистрация закрыта", show_alert=True)
+        return
+
+    uid = call.from_user.id
+    if uid in GAME["players"]:
+        await call.answer("Ты уже участвуешь 🙂", show_alert=True)
+        return
+
+    GAME["players"][uid] = call.from_user.full_name
+    await call.answer("✅ Ты в игре!")
+
+# ------------- принцесса --------------
+
+@dp.message(Command("princess_start"))
+async def princess_start(message: Message):
+    if GAME["phase"] != "REGISTRATION":
+        await message.answer("❌ Регистрация не активна")
+        return
+
+    if len(GAME["players"]) < 3:
+        await message.answer("❌ Нужно минимум 3 игрока")
+        return
+
+    GAME["princess"] = random.choice(list(GAME["players"].keys()))
+    GAME["phase"] = "WAITING_QUESTION"
+
+    # сообщение принцессе
+    await bot.send_message(
+        GAME["princess"],
+        "👑 <b>Ты — принцесса!</b>\n\n"
+        "Напиши вопрос для принцев 💌"
+    )
+
+    # сообщение всем принцам
+    for uid in GAME["players"]:
+        if uid == GAME["princess"]:
+            continue
+        try:
+            await bot.send_message(
+                uid,
+                "🤴 <b>Ваша роль — принц</b>\n\n"
+                "Ожидайте вопроса принцессы во флуде 👀"
+            )
+        except:
+            pass  # если ЛС закрыты
+
+    await message.answer("✨ Игра началась! Принцесса выбирает вопрос 👀")
+
+# ================= лс бота =================
+
+@dp.message(F.chat.type == "private")
+async def private_handler(message: Message):
+    uid = message.from_user.id
+
+    # ----- ВОПРОС ПРИНЦЕССЫ -----
+    if GAME["phase"] == "WAITING_QUESTION" and uid == GAME["princess"]:
+        GAME["question"] = message.text
+        GAME["answers"] = {}
+        GAME["answers_closed"] = False
+        GAME["phase"] = "COLLECTING_ANSWERS"
+
+        await bot.send_message(
+            GAME["chat_id"],
+            f"💬 <b>Вопрос от принцессы:</b>\n\n"
+            f"<i>{message.text}</i>\n\n"
+            f"🤴 Принцы, отвечайте боту в ЛС!\n"
+            f"⏳ Время: {ANSWER_TIME} сек."
+        )
+
+        # уведомление принцев
+        for pid in GAME["players"]:
+            if pid == GAME["princess"]:
+                continue
+            try:
+                await bot.send_message(
+                    pid,
+                    "💌 <b>Принцесса задала вопрос!</b>\n\n"
+                    "Напишите свой ответ боту ✍️"
+                )
+            except:
+                pass
+
+        GAME["timer_task"] = asyncio.create_task(answer_timer())
+        return
+
+    # ----- ОТВЕТ ПРИНЦА -----
+    if (
+        GAME["phase"] == "COLLECTING_ANSWERS"
+        and uid in GAME["players"]
+        and uid != GAME["princess"]
+    ):
+        if GAME["answers_closed"]:
+            await message.answer("⏳ Приём ответов закрыт")
+            return
+
+        if uid in GAME["answers"]:
+            await message.answer("❗ Ты уже отправил ответ")
+            return
+
+        GAME["answers"][uid] = message.text
+        await message.answer("✅ Ответ принят")
+
+# ================= таймер =================
+
+async def answer_timer():
+    try:
+        await asyncio.sleep(ANSWER_TIME)
+        await publish_answers()
+    except asyncio.CancelledError:
+        pass
+
+# ================= ответы принцев =================
+
+async def publish_answers():
+    if GAME["phase"] != "COLLECTING_ANSWERS":
+        return
+
+    GAME["answers_closed"] = True
+    GAME["phase"] = "WAITING_PRINCESS_CHOICE"
+
+    GAME["answer_order"] = list(GAME["answers"].items())
+    random.shuffle(GAME["answer_order"])
+
+    text = "📜 <b>Ответы принцев:</b>\n\n"
+    for i, (_, ans) in enumerate(GAME["answer_order"], start=1):
+        text += f"{i}. {ans}\n\n"
+
+    await bot.send_message(GAME["chat_id"], text)
+    await bot.send_message(
+        GAME["princess"],
+        "❌ Выбери ответ, который понравился меньше всего:",
+        reply_markup=choice_kb(len(GAME["answer_order"]))
+    )
+
+# ================= выбор кнопок =================
+
+@dp.callback_query(F.data.startswith("kick_"))
+async def princess_choice(call: CallbackQuery):
+    uid = call.from_user.id
+
+    if GAME["phase"] != "WAITING_PRINCESS_CHOICE" or uid != GAME["princess"]:
+        await call.answer("❌ Сейчас нельзя выбирать", show_alert=True)
+        return
+
+    idx = int(call.data.split("_")[1]) - 1
+    if idx < 0 or idx >= len(GAME["answer_order"]):
+        await call.answer("Ошибка", show_alert=True)
+        return
+
+    loser_id, _ = GAME["answer_order"][idx]
+    loser_name = GAME["players"].pop(loser_id)
+
+    await call.answer("💔 Готово")
+
+    await bot.send_message(
+        GAME["chat_id"],
+        f"💔 Принц с ответом под номером {idx + 1} вылетел"
+    )
+    try:
+        await bot.send_message(
+            loser_id,
+            "💔 К сожалению, ваш ответ не понравился принцессе.\n"
+            "Вы покидаете игру."
+        )
+    except:
+        pass
+
+    # победа
+    if len(GAME["players"]) == 2:
+        winner = [u for u in GAME["players"] if u != GAME["princess"]][0]
+        await bot.send_message(
+            GAME["chat_id"],
+            f"💍 <b>Принцесса нашла принца!</b>\n\n"
+            f"🤴 {GAME['players'][winner]}"
+        )
+        GAME["phase"] = "IDLE"
+        GAME["active"] = False
+        return
+
+    # следующий раунд
+    GAME["question"] = None
+    GAME["answers"] = {}
+    GAME["answer_order"] = []
+    GAME["phase"] = "WAITING_QUESTION"
+
+    await bot.send_message(GAME["princess"], "💌 Напиши новый вопрос")
+    
+# /who
+@dp.message(F.text == "/who")
+async def who_command(message: types.Message):
+    # доступ только для админов
+    if message.from_user.id not in ADMIN_IDS_CALL:
+        await message.reply("❌ Команда доступна только администраторам.")
+        return
+
+    chat_id = message.chat.id
+
+    admins = await message.bot.get_chat_administrators(chat_id)
+
+    users = [
+        admin.user
+        for admin in admins
+        if not admin.user.is_bot
+    ]
+
+    if not users:
+        await message.answer("❌ Никого не найдено.")
+        return
+
+    text = "👥 <b>Будут тегнуты:</b>\n\n"
+
+    for u in users:
+        if u.username:
+            text += f"• @{u.username}\n"
+        else:
+            text += f"• {u.full_name}\n"
+
+    text += f"\n<b>Всего:</b> {len(users)}"
+
+    await message.answer(text, parse_mode="HTML")
+
 # ----------- калл ---------------
 
-@dp.message(F.text.regexp(r'^калл(\s+.*)?$'))
-async def call_everyone(message: types.Message, state: FSMContext):
-    # Игнорируем, если пользователь в FSM
-    if await state.get_state():
-        return
+# Только для обычных сообщений, кроме команд и калла
+@dp.message(lambda message: message.text and not message.text.lower().startswith("калл") and not message.text.startswith("/"))
+async def track_active_members(message: types.Message):
+    chat_id = str(message.chat.id)
+    user_id = str(message.from_user.id)
+    username = message.from_user.username or message.from_user.full_name
 
-    # Проверяем, что пользователь админ
-    if message.from_user.id not in ADMIN_IDS_CALL:
-        await message.answer("❌ Только админы могут использовать калл.")
-        return
+    if chat_id not in ACTIVE_MEMBERS:
+        ACTIVE_MEMBERS[chat_id] = {}
 
-    chat_id = message.chat.id
-    call_text = message.text[4:].strip()  # текст после "калл"
+    ACTIVE_MEMBERS[chat_id][user_id] = username
+    save_active_members(ACTIVE_MEMBERS)
+
     
-    # Если текста нет — оставляем пустую строку
-    if not call_text:
-        call_text = ""
-
-    # Получаем всех участников из истории чата (или из собственного списка)
-    ACTIVE_MEMBERS = getattr(bot, 'active_members', {})
-    chat_members = ACTIVE_MEMBERS.get(chat_id, {})
-    all_users = {user_id: username for user_id, username in chat_members.items() if user_id != message.from_user.id}
-
-    if not all_users:
-        await message.answer("❌ Нет участников для упоминания.")
-        return
-
-    # Ограничение на количество упоминаний
-    MAX_MENTIONS = 50
-    mentions = [
-        f"<a href='tg://user?id={user_id}'>{username}</a>"
-        for i, (user_id, username) in enumerate(all_users.items()) if i < MAX_MENTIONS
-    ]
-
-    final_text = f"{call_text}\n\n" + " ".join(mentions)
-    await message.answer(final_text, parse_mode="HTML")
-
-@dp.message(F.text.regexp(r'^Калл(\s+.*)?$'))
-async def call_everyone(message: types.Message, state: FSMContext):
-    # Игнорируем, если пользователь в FSM
-    if await state.get_state():
-        return
-
-    # Проверяем, что пользователь админ
+# отмена калла
+@dp.message(Command("cancel_call"))
+async def cancel_call_handler(message: types.Message):
     if message.from_user.id not in ADMIN_IDS_CALL:
-        await message.answer("❌ Только админы могут использовать калл.")
+        await message.reply("❌ Только админы могут отменять калл.")
         return
 
     chat_id = message.chat.id
-    call_text = message.text[4:].strip()  # текст после "калл"
-    
-    # Если текста нет — оставляем пустую строку
-    if not call_text:
-        call_text = ""
+    task = CALL_TIMERS.get(chat_id)
 
-    # Получаем всех участников из истории чата (или из собственного списка)
-    ACTIVE_MEMBERS = getattr(bot, 'active_members', {})
-    chat_members = ACTIVE_MEMBERS.get(chat_id, {})
-    all_users = {user_id: username for user_id, username in chat_members.items() if user_id != message.from_user.id}
+    if task:
+        task.cancel()
+        CALL_TIMERS.pop(chat_id, None)
+        await message.reply("❌ Таймер калла отменён.")
+    else:
+        await message.reply("❌ Нет активного таймера калла.")
 
-    if not all_users:
-        await message.answer("❌ Нет участников для упоминания.")
+
+# -------------------- Команда калл --------------------
+async def do_call(chat_id: int, bot, text: str):
+    """Функция, которая отправляет калл в чат."""
+    # получаем всех админов чата
+    admins = await bot.get_chat_administrators(chat_id)
+
+    user_ids = [admin.user.id for admin in admins if not admin.user.is_bot]
+    if not user_ids:
+        await bot.send_message(chat_id, "❌ Некого звать.")
         return
 
-    # Ограничение на количество упоминаний
     MAX_MENTIONS = 50
-    mentions = [
-        f"<a href='tg://user?id={user_id}'>{username}</a>"
-        for i, (user_id, username) in enumerate(all_users.items()) if i < MAX_MENTIONS
-    ]
+    mentions = [f"<a href='tg://user?id={uid}'>\u200b</a>" for uid in user_ids[:MAX_MENTIONS]]
 
-    final_text = f"{call_text}\n\n" + " ".join(mentions)
-    await message.answer(final_text, parse_mode="HTML")
+    final_text = f"{text}\n\n" + " ".join(mentions)
+    await bot.send_message(chat_id, final_text, parse_mode="HTML")
 
 
-@dp.message()
-async def track_members(message: types.Message):
-    if message.from_user.is_bot:
+@dp.message(lambda message: message.text and message.text.lower().startswith("калл"))
+async def call_handler(message: types.Message):
+    if not message.text:
         return
-    if not hasattr(bot, 'active_members'):
-        bot.active_members = {}
+
+    if not message.text.lower().startswith("калл"):
+        return
+
+    # только админы, которые могут калл
+    if message.from_user.id not in ADMIN_IDS_CALL:
+        await message.reply("❌ Только админы могут использовать калл.")
+        return
+
     chat_id = message.chat.id
-    if chat_id not in bot.active_members:
-        bot.active_members[chat_id] = {}
-    bot.active_members[chat_id][message.from_user.id] = message.from_user.username or message.from_user.full_name
+    args = message.text[4:].strip()  # текст после "калл"
+
+    # Проверяем, есть ли "через N" для таймера
+    m = re.search(r"через\s+(\d+)", args)
+    if m:
+        minutes = int(m.group(1))
+        call_text = args[:m.start()].strip() or "Созыв"
+
+        # если уже есть таймер для этого чата, отменяем
+        if chat_id in CALL_TIMERS:
+            CALL_TIMERS[chat_id].cancel()
+
+        # создаем новую задачу таймера
+        async def timer_task():
+            try:
+                await asyncio.sleep(minutes * 60)
+                await do_call(chat_id, message.bot, call_text)
+                CALL_TIMERS.pop(chat_id, None)
+            except asyncio.CancelledError:
+                pass
+
+        task = asyncio.create_task(timer_task())
+        CALL_TIMERS[chat_id] = task
+
+        await message.reply(f"⏱️ Калл запланирован через {minutes} минут.")
+    else:
+        # обычный калл сразу
+        call_text = args or "Созыв"
+        await do_call(chat_id, message.bot, call_text)
 
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 
 
