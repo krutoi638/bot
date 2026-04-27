@@ -141,6 +141,18 @@ class ComplaintFSM(StatesGroup):
 class AdminAnswerFSM(StatesGroup):
     waiting_answer = State()
 
+class ChangeRoleFSM(StatesGroup):
+    region = State()
+    character = State()
+    confirm = State()
+
+class UserReplyFSM(StatesGroup):
+    waiting_reply = State()
+    
+class BroadcastFSM(StatesGroup):
+    waiting_message = State()
+
+
 
 # -------------------- Инициализация --------------------
 bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -244,7 +256,8 @@ def start_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Я хочу вступить", callback_data="start_register")],
         [InlineKeyboardButton(text="❓ Я хочу задать вопрос", callback_data="start_question")],
-        [InlineKeyboardButton(text="⚠ Жалоба на участника/админа", callback_data="start_complaint")]
+        [InlineKeyboardButton(text="⚠ Жалоба на участника/админа", callback_data="start_complaint")],
+        [InlineKeyboardButton(text="🔄 Сменить роль", callback_data="change_role")]
     ])
 
 def answer_kb(user_id: int):
@@ -345,6 +358,14 @@ def choice_kb(count: int):
             for i in range(1, count + 1)
         ]
     )
+
+def reply_to_admin_kb():
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏ Ответить на ответ", callback_data="reply_to_admin")]
+        ]
+    )
+    return kb
 
 
 
@@ -535,6 +556,125 @@ async def check_code(message: types.Message, state: FSMContext):
 
     await state.clear()
 
+# ---------------- смена роли ----------------------
+@dp.callback_query(F.data == "change_role")
+async def change_role_start(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+
+    current_role = None
+    for char, data in OCCUPIED.items():
+        if isinstance(data, dict) and data.get("id") == user_id:
+            current_role = char
+            break
+
+    if not current_role:
+        await call.answer("❌ У вас нет активной роли", show_alert=True)
+        return
+
+    await state.update_data(old_role=current_role)
+
+    await call.message.edit_text(
+        f"🔄 Ваша текущая роль: <b>{current_role}</b>\n\n🌍 Выберите новый регион:",
+        reply_markup=regions_kb()
+    )
+
+    await state.set_state(ChangeRoleFSM.region)
+
+
+@dp.callback_query(ChangeRoleFSM.region, F.data.startswith("reg_"))
+async def change_role_region(call: CallbackQuery, state: FSMContext):
+    region = call.data.replace("reg_", "")
+    await state.update_data(region=region)
+    await call.message.edit_text(
+        f"🎭 Регион {region}. Выберите новую роль:",
+        reply_markup=characters_kb(region)
+    )
+    await state.set_state(ChangeRoleFSM.character)
+
+@dp.callback_query(ChangeRoleFSM.character, F.data.startswith("char_"))
+async def change_role_character(call: CallbackQuery, state: FSMContext):
+    char = call.data.replace("char_", "")
+
+    if char in OCCUPIED:
+        await call.answer("❌ Эта роль уже занята", show_alert=True)
+        return
+
+    await state.update_data(new_role=char)
+    await call.message.edit_text(
+        f"Вы хотите сменить роль на <b>{char}</b>?",
+        reply_markup=confirm_kb()
+    )
+    await state.set_state(ChangeRoleFSM.confirm)
+
+@dp.callback_query(ChangeRoleFSM.confirm, F.data == "confirm_yes")
+async def change_role_confirm(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    old_role = data["old_role"]
+    new_role = data["new_role"]
+    user = call.from_user
+
+    for admin in ADMIN_IDS:
+        await bot.send_message(
+            admin,
+            f"🔄 <b>Запрос на смену роли</b>\n\n"
+            f"Пользователь: @{user.username or 'нет'}\n"
+            f"ID: {user.id}\n"
+            f"Старая роль: {old_role}\n"
+            f"Новая роль: {new_role}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="✅ Принять",
+                    callback_data=f"approve_change|{user.id}|{old_role}|{new_role}"
+                ),
+                InlineKeyboardButton(
+                    text="❌ Отклонить",
+                    callback_data=f"reject_change_{user.id}"
+                )
+            ]])
+        )
+
+    await call.message.edit_text("⏳ Запрос отправлён администрации.")
+    await state.clear()
+
+@dp.callback_query(F.data.startswith("approve_change|"))
+async def approve_role_change(call: CallbackQuery):
+    _, user_id, old_role, new_role = call.data.split("|")
+    user_id = int(user_id)
+
+    birthday = OCCUPIED.get(old_role, {}).get("birthday", "Не указана")
+
+    OCCUPIED.pop(old_role, None)
+    OCCUPIED[new_role] = {
+        "id": user_id,
+        "birthday": birthday
+    }
+
+    save_occupied()
+
+    await bot.send_message(
+        user_id,
+        f"✅ Ваша роль успешно изменена!\n\n🔁 {old_role} → {new_role}"
+    )
+
+    await call.message.edit_reply_markup()
+    await call.answer("Готово ✅")
+
+
+@dp.callback_query(F.data.startswith("reject_change|"))
+async def reject_role_change(call: CallbackQuery):
+    _, user_id = call.data.split("|")
+
+    await bot.send_message(
+        int(user_id),
+        "❌ Запрос на смену роли был отклонён."
+    )
+
+    await call.message.edit_reply_markup()
+    await call.answer("Отклонено ❌")
+
+
+
+
 # ---- дата рождения ------
 
 @dp.callback_query(RegisterFSM.birthday, F.data.startswith("bday_day_"))
@@ -625,6 +765,126 @@ async def unban_user(message: types.Message):
     if user_id in BANNED: BANNED.remove(user_id)
     save_banned()
     await message.reply(f"✅ Пользователь {user_id} разбанен.")
+    
+@dp.message(Command("banlist"))
+async def show_banlist(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.reply("❌ Только админы могут просматривать список забаненных.")
+        return
+    
+    if not BANNED:
+        await message.reply("✅ Список забаненных пуст.")
+        return
+    
+    text = "🚫 <b>Список забаненных пользователей:</b>\n\n"
+    
+    for i, user_id in enumerate(BANNED, start=1):
+        # Пытаемся получить информацию о пользователе
+        try:
+            user = await bot.get_chat(user_id)
+            username = f"@{user.username}" if user.username else user.full_name
+            text += f"{i}. {username} (ID: <code>{user_id}</code>)\n"
+        except:
+            # Если не удалось получить инфо (удалённый аккаунт и т.д.)
+            text += f"{i}. ID: <code>{user_id}</code>\n"
+    
+    text += f"\n<b>Всего:</b> {len(BANNED)}"
+    
+    await message.reply(text)
+    
+# обьявления
+@dp.message(Command("broadcast"))
+async def broadcast_start(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.reply("❌ Только админы могут делать рассылку.")
+        return
+    
+    await message.reply(
+        "📢 <b>Рассылка сообщения</b>\n\n"
+        "Отправьте текст, который хотите разослать всем зарегистрированным пользователям.\n\n"
+        "Для отмены отправьте /cancel"
+    )
+    await state.set_state(BroadcastFSM.waiting_message)
+
+
+@dp.message(BroadcastFSM.waiting_message, Command("cancel"))
+async def broadcast_cancel(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.reply("❌ Рассылка отменена.")
+
+
+@dp.message(BroadcastFSM.waiting_message)
+async def broadcast_send(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    
+    # Собираем всех пользователей из OCCUPIED
+    user_ids = set()
+    for char, data in OCCUPIED.items():
+        if isinstance(data, dict):
+            user_ids.add(data.get("id"))
+    
+    if not user_ids:
+        await message.reply("❌ Нет зарегистрированных пользователей.")
+        await state.clear()
+        return
+    
+    # Подтверждение
+    await message.reply(
+        f"📊 Сообщение будет отправлено <b>{len(user_ids)}</b> пользователям.\n\n"
+        f"Подтвердите отправку:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Отправить", callback_data="broadcast_confirm"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel")
+            ]
+        ])
+    )
+    
+    # Сохраняем текст сообщения
+    await state.update_data(broadcast_text=message.text or message.caption, user_ids=list(user_ids))
+
+
+@dp.callback_query(F.data == "broadcast_confirm")
+async def broadcast_confirm(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("❌ Только админы", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    text = data.get("broadcast_text")
+    user_ids = data.get("user_ids", [])
+    
+    await call.message.edit_text("⏳ Рассылка началась...")
+    
+    success = 0
+    failed = 0
+    
+    for user_id in user_ids:
+        try:
+            await bot.send_message(
+                user_id,
+                f"📢 <b>Сообщение от администрации:</b>\n\n{text}"
+            )
+            success += 1
+            await asyncio.sleep(0.05)  # задержка, чтобы не словить флуд-контроль
+        except Exception as e:
+            failed += 1
+            print(f"Ошибка отправки {user_id}: {e}")
+    
+    await call.message.edit_text(
+        f"✅ Рассылка завершена!\n\n"
+        f"📨 Отправлено: {success}\n"
+        f"❌ Не доставлено: {failed}"
+    )
+    
+    await state.clear()
+
+
+@dp.callback_query(F.data == "broadcast_cancel")
+async def broadcast_cancel_callback(call: types.CallbackQuery, state: FSMContext):
+    await call.message.edit_text("❌ Рассылка отменена.")
+    await state.clear()
 
 
 # ---------- Начало жалобы ----------
@@ -672,16 +932,12 @@ async def admin_start_answer(call: types.CallbackQuery, state: FSMContext):
         await call.answer("❌ Только админы", show_alert=True)
         return
 
-    user_id = call.data.replace("ans_", "")
-    app = APPLICATIONS.get(user_id)
+    user_id = int(call.data.replace("ans_", ""))
 
-    if not app or app["status"] != "pending":
-        await call.answer("⚠ Анкета уже обработана другим админом", show_alert=True)
-        return
-
-    await state.update_data(answer_target=int(user_id))
+    await state.update_data(answer_target=user_id)
     await call.message.answer("✏ Введите текст ответа пользователю:")
     await state.set_state(AdminAnswerFSM.waiting_answer)
+
 
 
 @dp.message(AdminAnswerFSM.waiting_answer)
@@ -695,13 +951,45 @@ async def admin_send_answer(message: types.Message, state: FSMContext):
     try:
         await bot.send_message(
             target_id,
-            f"💬 Ответ администрации:\n\n{message.text}"
+            f"💬 Ответ администрации:\n\n{message.text}",
+            reply_markup=reply_to_admin_kb()  # кнопка здесь
         )
         await message.answer("✅ Ответ отправлен пользователю.")
     except:
         await message.answer("❌ Не удалось отправить ответ.")
 
     await state.clear()
+
+# ------ ответ пользователя ------
+@dp.callback_query(F.data == "reply_to_admin")
+async def user_click_reply(call: CallbackQuery, state: FSMContext):
+    await call.message.answer("✏ Напишите ответ администратору:")
+    
+    # Сохраняем, кому отправлять ответ (можно брать последнего админа, который отвечал)
+    await state.update_data(admin_id=ADMIN_IDS[0])  # здесь можно усложнить
+    await state.set_state(UserReplyFSM.waiting_reply)
+    await call.answer()  # чтобы убрать «часики» на кнопке
+
+@dp.message(UserReplyFSM.waiting_reply)
+async def user_reply_to_admin(message: Message, state: FSMContext):
+    data = await state.get_data()
+    admin_id = data.get("admin_id")
+
+    if not admin_id:
+        await message.answer("❌ Нет активного ответа, на который можно ответить.")
+        await state.clear()
+        return
+
+    await bot.send_message(
+        admin_id,
+        f"💬 Пользователь @{message.from_user.username or message.from_user.id} ответил:\n\n{message.text}"
+    )
+    await message.answer("✅ Ответ отправлен администратору.")
+    await state.clear()
+
+
+
+
 
 # ----------- кнопки принять отклонить ----------------------
 @dp.callback_query(F.data.startswith("approve_"))
@@ -721,7 +1009,13 @@ async def approve_user(call: types.CallbackQuery):
     app["handled_by"] = call.from_user.id
     save_applications()
 
-    await bot.send_message(int(user_id), "✅ Ваша анкета принята!")
+    await bot.send_message(
+        user_id,
+        "✅ Ваша анкета одобрена!\n\n"
+        "Добро пожаловать 🌊\n"
+        "Вот ссылка на флуд:\n"
+        "https://t.me/+bjlQJT5cBk02ZjAy"
+    )    
     await call.message.edit_reply_markup()
     await call.answer("Принято ✅")
 
@@ -1008,6 +1302,7 @@ async def princess_choice(call: CallbackQuery):
     GAME["phase"] = "WAITING_QUESTION"
 
     await bot.send_message(GAME["princess"], "💌 Напиши новый вопрос")
+    
     
 # /who
 @dp.message(F.text == "/who")
