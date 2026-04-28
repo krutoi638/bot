@@ -31,16 +31,17 @@ OCCUPIED_FILE = "occupied.json"
 BANNED_FILE = "banned.json"
 ACTIVE_MEMBERS_FILE = "active_members.json"
 APPLICATIONS_FILE = "applications.json"
+ROLE_CHANGE_REQUESTS_FILE = "role_change_requests.json"
 ROLES = {
-    "МОНДШТАДТ": ["Альбедо","Барбара","Беннет","Венти","Далия","Дилюк","Диона","Джинн","Кэйа","Кли","Лиза","Мона","Мика","Рэйзор","Розария","Сахароза","Фишль","Эмбер","Эола","Ноэлль","Дурин","Варка","Алиса","Николь"],
-    "ЛИ ЮЭ": ["Бай Чжу","Бэй Доу","Гань Юй","Е Лань","Ка Мин","Кэ Цин","Нин Гуан","Син Цу","Сяо","Сян Лин","Синь Янь","Лань Янь","Ху Тао","Чун Юнь","Чжун Ли","Шэнь Хэ","Юнь Цзинь","Ци Ци","Янь Фей","Яо Яо","Сянь Юнь","Цзы Бай"],
-    "ИНАДЗУМА": ["Аято","Аяка","Горо","Ёимия","Итто","Кокоми","Кадзуха","Куки","Кирара","Райден","Саю","Сара","Тиори","Тома","Хэйдзо","Яэ Мико","Мидзуки"],
-    "СУМЕРУ": ["Аль-Хайтам","Дехья","Дори","Коллеи","Кавех","Кандакия","Лайла","Нилу","Нахида","Сайно","Сетос","Странник","Тигнари","Фарузан"],
+    "МОНДШТАДТ": ["Алиса","Альбедо","Барбара","Беннет","Варка","Венти","Далия","Дилюк","Диона","Джинн","Дурин","Кейа","Кли","Лиза","Лоэн","Мика","Мона","Николь","Ноэлль","Прюн","Рэйзор","Розария","Сахароза","Фишль","Эмбер","Эола"],
+    "ЛИ ЮЭ": ["Бай Чжу","Бэй Доу","Гань Юй","Е Лань","Ка Мин","Кэ Цин","Лань Янь","Нин Гуан","Син Цу","Сяо","Сян Лин","Сянь Юнь","Синь Янь","Ху Тао","Чун Юнь","Чжун Ли","Шэнь Хэ","Ци Ци","Цзы Бай","Юнь Цзинь","Янь Фей","Яо Яо"],
+    "ИНАДЗУМА": ["Аято","Аяка","Горо","Ёимия","Итто","Кадзуха","Кирара","Кокоми","Куки","Мидзуки","Райден","Саю","Сара","Тиори","Тома","Хэйдзо","Яэ Мико"],
+    "СУМЕРУ": ["Аль-Хайтам","Дехья","Дори","Кавех","Кандакия","Коллеи","Лайла","Нахида","Нилу","Сайно","Сетос","Странник","Тигнари","Фарузан"],
     "ФОНТЕЙН": ["Клоринда","Лини","Линетт","Навия","Нёвиллет","Ризли","Сиджвин","Фокалорс","Фремине","Фурина","Шарлотта","Шеврёз","Эмилия"],
-    "НАТЛАН": ["Муалани","Кинич","Качина","Мавуика","Часка","Шилонен","Иансан","Ситлали","Оророн","Вареса","Ифа"],
-    "НОД-КРАИ": ["Айно","Инеффа","Лаума","Нефер","Флинс","Ягода","Иллуга","Лоэн","Линнея","Гретель"],
-    "ФАТУИ": ["Арлекино","Дотторе","Капитано","Коломбина","Панталоне","Пьеро","Пульчинелла","Синьора","Сандроне","Тарталья","Царица","Скарамучча"],
-    "ДРУГИЕ": ["Дайнслейф","Итер","Люмин","Паймон","Скирк","Элой"]
+    "НАТЛАН": ["Вареса","Иансан","Ифа","Качина","Кинич","Мавуика","Муалани","Оророн","Ситлали","Шилонен","Часка"],
+    "НОД-КРАЙ": ["Айно","Инеффа","Иллуга","Лаума","Линнея","Лоэн","Нефер","Флинс","Ягода"],
+    "ФАТУИ": ["Арлекино","Дотторе","Капитано","Коломбина","Панталоне","Пьеро","Пульчинелла","Сандроне","Синьора","Скарамучча","Тарталья","Царица"],
+    "ДРУГИЕ": ["Дайнслейф","Итер","Люмин","Паймон","Ронова","Скирк","Элой"]
 }
 MONTHS = {
     "01": "января",
@@ -90,6 +91,7 @@ def save_json(path, data):
 OCCUPIED = load_json(OCCUPIED_FILE, {})
 BANNED = set(load_json(BANNED_FILE, []))
 APPLICATIONS = load_json(APPLICATIONS_FILE, {})
+ROLE_CHANGE_REQUESTS = load_json(ROLE_CHANGE_REQUESTS_FILE, {})
 
 def save_occupied():
     save_json(OCCUPIED_FILE, OCCUPIED)
@@ -112,6 +114,9 @@ def save_active_members(data):
 
 def save_applications():
     save_json(APPLICATIONS_FILE, APPLICATIONS)
+
+def save_role_requests():
+    save_json(ROLE_CHANGE_REQUESTS_FILE, ROLE_CHANGE_REQUESTS)
 
 # загружаем участников при старте
 ACTIVE_MEMBERS = load_active_members()
@@ -369,6 +374,7 @@ def reply_to_admin_kb():
 
 
 
+
 # -------------------- Хелперы --------------------
 async def check_ban(user_id: int, message: types.Message = None):
     if user_id in BANNED:
@@ -386,6 +392,7 @@ async def delete_previous_bot_msg(state: FSMContext):
             await bot.delete_message(chat_id=chat_id, message_id=msg_id)
         except:
             pass
+
 
 
 # -------------------- Обработчики --------------------
@@ -613,6 +620,14 @@ async def change_role_confirm(call: CallbackQuery, state: FSMContext):
     new_role = data["new_role"]
     user = call.from_user
 
+    ROLE_CHANGE_REQUESTS[str(user.id)] = {
+        "old_role": old_role,
+        "new_role": new_role,
+        "status": "pending",
+        "handled_by": None
+    }
+    save_role_requests()
+
     for admin in ADMIN_IDS:
         await bot.send_message(
             admin,
@@ -624,11 +639,11 @@ async def change_role_confirm(call: CallbackQuery, state: FSMContext):
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
                     text="✅ Принять",
-                    callback_data=f"approve_change|{user.id}|{old_role}|{new_role}"
+                    callback_data=f"rc_approve|{user.id}|{old_role}|{new_role}"
                 ),
                 InlineKeyboardButton(
                     text="❌ Отклонить",
-                    callback_data=f"reject_change_{user.id}"
+                    callback_data=f"rc_reject|{user.id}"
                 )
             ]])
         )
@@ -636,33 +651,61 @@ async def change_role_confirm(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text("⏳ Запрос отправлён администрации.")
     await state.clear()
 
-@dp.callback_query(F.data.startswith("approve_change|"))
+@dp.callback_query(F.data.startswith("rc_approve|"))
 async def approve_role_change(call: CallbackQuery):
     _, user_id, old_role, new_role = call.data.split("|")
-    user_id = int(user_id)
+    user_id = str(user_id).strip()
+
+    req = ROLE_CHANGE_REQUESTS.get(user_id)
+
+    if req is None:
+        await call.answer("⚠ Заявка не найдена", show_alert=True)
+        return
+
+    if req.get("status") != "pending":
+        await call.answer("⚠ Анкета уже обработана другим админом", show_alert=True)
+        return
+
+    req["status"] = "approved"
+    req["handled_by"] = call.from_user.id
+    save_role_requests()
 
     birthday = OCCUPIED.get(old_role, {}).get("birthday", "Не указана")
 
     OCCUPIED.pop(old_role, None)
     OCCUPIED[new_role] = {
-        "id": user_id,
+        "id": int(user_id),
         "birthday": birthday
     }
-
     save_occupied()
 
     await bot.send_message(
-        user_id,
+        int(user_id),
         f"✅ Ваша роль успешно изменена!\n\n🔁 {old_role} → {new_role}"
     )
 
     await call.message.edit_reply_markup()
-    await call.answer("Готово ✅")
+    await call.answer("Принято ✅")
 
 
-@dp.callback_query(F.data.startswith("reject_change|"))
+@dp.callback_query(F.data.startswith("rc_reject|"))
 async def reject_role_change(call: CallbackQuery):
     _, user_id = call.data.split("|")
+    user_id = str(user_id).strip()
+
+    req = ROLE_CHANGE_REQUESTS.get(user_id)
+
+    if req is None:
+        await call.answer("⚠ Заявка не найдена", show_alert=True)
+        return
+
+    if req.get("status") != "pending":
+        await call.answer("⚠ Анкета уже обработана другим админом", show_alert=True)
+        return
+
+    req["status"] = "rejected"
+    req["handled_by"] = call.from_user.id
+    save_role_requests()
 
     await bot.send_message(
         int(user_id),
@@ -994,15 +1037,17 @@ async def user_reply_to_admin(message: Message, state: FSMContext):
 # ----------- кнопки принять отклонить ----------------------
 @dp.callback_query(F.data.startswith("approve_"))
 async def approve_user(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("❌ Только админы", show_alert=True)
+        return
     _, user_id, char = call.data.split("_")
-    user_id = str(user_id)
 
     app = APPLICATIONS.get(user_id)
 
     # ⛔ если анкета уже обработана
     if not app or app["status"] != "pending":
         await call.answer("⚠ Анкета уже обработана другим админом", show_alert=True)
-        return
+        return  
 
     # ✅ фиксируем решение
     app["status"] = "approved"
@@ -1163,6 +1208,34 @@ async def princess_start(message: Message):
             pass  # если ЛС закрыты
 
     await message.answer("✨ Игра началась! Принцесса выбирает вопрос 👀")
+
+@dp.message(Command("princess_stop"))
+async def princess_stop(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ Только админы могут остановить игру.")
+        return
+
+    global GAME
+
+    # сброс таймера если есть
+    if GAME.get("timer_task"):
+        GAME["timer_task"].cancel()
+
+    # очистка состояния игры
+    GAME.update({
+        "active": False,
+        "phase": "IDLE",
+        "chat_id": None,
+        "players": {},
+        "princess": None,
+        "question": None,
+        "answers": {},
+        "answer_order": [],
+        "answers_closed": False,
+        "timer_task": None
+    })
+
+    await message.answer("🛑 Игра «Принцесса» остановлена.")
 
 # ================= лс бота =================
 
@@ -1374,17 +1447,39 @@ async def cancel_call_handler(message: types.Message):
 
 # -------------------- Команда калл --------------------
 async def do_call(chat_id: int, bot, text: str):
-    """Функция, которая отправляет калл в чат."""
-    # получаем всех админов чата
-    admins = await bot.get_chat_administrators(chat_id)
+    user_ids = set()
 
-    user_ids = [admin.user.id for admin in admins if not admin.user.is_bot]
+    # --- 1. Пытаемся взять админов ---
+    try:
+        admins = await bot.get_chat_administrators(chat_id)
+        for admin in admins:
+            if not admin.user.is_bot:
+                user_ids.add(admin.user.id)
+    except Exception as e:
+        print("Не удалось получить админов:", e)
+
+    # --- 2. Добавляем активных участников ---
+    chat_id_str = str(chat_id)
+    if chat_id_str in ACTIVE_MEMBERS:
+        for uid in ACTIVE_MEMBERS[chat_id_str].keys():
+            try:
+                user_ids.add(int(uid))
+            except:
+                pass
+
+    # --- если никого нет ---
     if not user_ids:
         await bot.send_message(chat_id, "❌ Некого звать.")
         return
 
+    # --- ограничение Telegram ---
     MAX_MENTIONS = 50
-    mentions = [f"<a href='tg://user?id={uid}'>\u200b</a>" for uid in user_ids[:MAX_MENTIONS]]
+    user_ids = list(user_ids)[:MAX_MENTIONS]
+
+    mentions = [
+        f"<a href='tg://user?id={uid}'>\u200b</a>"
+        for uid in user_ids
+    ]
 
     final_text = f"{text}\n\n" + " ".join(mentions)
     await bot.send_message(chat_id, final_text, parse_mode="HTML")
